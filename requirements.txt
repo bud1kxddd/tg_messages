@@ -1,1 +1,6 @@
 telethon==1.34.0
+asyncio
+random
+datetime
+logging
+json
