@@ -1,7 +1,7 @@
 import asyncio
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from telethon import TelegramClient
 import json
 
@@ -88,7 +88,7 @@ class TelegramSender:
             logger.error(f"❌ Помилка при надсиланні в групу {group_link}: {e}")
             return False
     
-    async def start_mass_sending(self):
+    async def start_mass_sending(self, cycles=1):
         """Основна функція для масової розсилки"""
         try:
             # Підключення до Telegram
@@ -107,39 +107,66 @@ class TelegramSender:
                 logger.error("Список повідомлень порожній!")
                 return
             
-            logger.info(f"Початок розсилки в {len(groups)} груп")
+            logger.info(f"Початок розсилки в {len(groups)} груп, циклів: {cycles}")
             
-            successful_sends = 0
-            failed_sends = 0
+            total_successful = 0
+            total_failed = 0
             
-            for i, group_link in enumerate(groups, 1):
-                # Вибір випадкового повідомлення
-                random_message = random.choice(messages)
+            for cycle in range(1, cycles + 1):
+                logger.info("="*60)
+                logger.info(f"🔄 ЦИКЛ {cycle}/{cycles}")
+                logger.info("="*60)
                 
-                logger.info(f"[{i}/{len(groups)}] Надсилання в групу: {group_link}")
-                logger.info(f"Повідомлення: {random_message[:50]}...")
+                cycle_successful = 0
+                cycle_failed = 0
                 
-                # Надсилання повідомлення
-                success = await self.send_message_to_group(group_link, random_message)
+                for i, group_link in enumerate(groups, 1):
+                    # Вибір випадкового повідомлення для кожної групи
+                    random_message = random.choice(messages)
+                    
+                    logger.info(f"[{i}/{len(groups)}] Надсилання в групу: {group_link}")
+                    logger.info(f"Повідомлення: {random_message[:50]}...")
+                    
+                    # Надсилання повідомлення
+                    success = await self.send_message_to_group(group_link, random_message)
+                    
+                    if success:
+                        cycle_successful += 1
+                        total_successful += 1
+                    else:
+                        cycle_failed += 1
+                        total_failed += 1
+                    
+                    # Невелика затримка між групами в межах одного циклу (щоб не заблокували)
+                    if i < len(groups):
+                        small_delay = random.randint(5, 15)  # 5-15 секунд між групами
+                        logger.info(f"⏳ Мала затримка: {small_delay} секунд...")
+                        await asyncio.sleep(small_delay)
                 
-                if success:
-                    successful_sends += 1
-                else:
-                    failed_sends += 1
+                # Статистика циклу
+                logger.info("-"*50)
+                logger.info(f"📊 СТАТИСТИКА ЦИКЛУ {cycle}:")
+                logger.info(f"✅ Успішно надіслано: {cycle_successful}")
+                logger.info(f"❌ Помилок: {cycle_failed}")
+                logger.info(f"📝 Всього груп в циклі: {len(groups)}")
+                logger.info("-"*50)
                 
-                # Затримка перед наступним повідомленням (окрім останнього)
-                if i < len(groups):
+                # Велика затримка після завершення циклу (окрім останнього)
+                if cycle < cycles:
                     delay = self.get_random_delay()
-                    logger.info(f"⏳ Очікування {delay//60} хвилин перед наступним повідомленням...")
+                    logger.info(f"🕐 ЗАТРИМКА МІЖ ЦИКЛАМИ: {delay//60} хвилин ({delay} секунд)")
+                    logger.info(f"⏰ Наступний цикл почнеться о {(datetime.now() + timedelta(seconds=delay)).strftime('%H:%M:%S')}")
                     await asyncio.sleep(delay)
             
-            # Підсумкова статистика
-            logger.info("="*50)
-            logger.info("📊 ПІДСУМКОВА СТАТИСТИКА:")
-            logger.info(f"✅ Успішно надіслано: {successful_sends}")
-            logger.info(f"❌ Помилок: {failed_sends}")
-            logger.info(f"📝 Всього груп: {len(groups)}")
-            logger.info("="*50)
+            # Підсумкова статистика всіх циклів
+            logger.info("="*60)
+            logger.info("🏁 ПІДСУМКОВА СТАТИСТИКА ВСІХ ЦИКЛІВ:")
+            logger.info(f"✅ Всього успішно надіслано: {total_successful}")
+            logger.info(f"❌ Всього помилок: {total_failed}")
+            logger.info(f"🔄 Циклів виконано: {cycles}")
+            logger.info(f"📝 Груп в кожному циклі: {len(groups)}")
+            logger.info(f"📊 Всього спроб відправки: {cycles * len(groups)}")
+            logger.info("="*60)
             
         except Exception as e:
             logger.error(f"Критична помилка: {e}")
@@ -153,13 +180,16 @@ async def main():
     API_HASH = '76638ee0a131af4fdf1a388f0b947b78'  # Замініть на ваш API Hash
     PHONE_NUMBER = '+380631420477'  # Замініть на ваш номер телефону (+380XXXXXXXXX)
     
+    # Налаштування кількості циклів розсилки
+    CYCLES = 1  # Змініть на потрібну кількість циклів (наприклад, 5 для 5 циклів)
+    
     if API_ID == 'YOUR_API_ID' or API_HASH == 'YOUR_API_HASH':
         print("❌ Будь ласка, вкажіть ваші дані API в коді!")
         print("Отримати їх можна на https://my.telegram.org/apps")
         return
     
     sender = TelegramSender(API_ID, API_HASH, PHONE_NUMBER)
-    await sender.start_mass_sending()
+    await sender.start_mass_sending(cycles=CYCLES)
 
 if __name__ == "__main__":
     asyncio.run(main())
