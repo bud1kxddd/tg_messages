@@ -3,6 +3,7 @@ import random
 import logging
 from datetime import datetime, timedelta
 from telethon import TelegramClient
+from config import API_ID, API_HASH, PHONE_NUMBER
 import json
 
 # Налаштування логування
@@ -107,65 +108,104 @@ class TelegramSender:
                 logger.error("Список повідомлень порожній!")
                 return
             
-            logger.info(f"Початок розсилки в {len(groups)} груп, циклів: {cycles}")
+            # Визначення режиму роботи
+            infinite_mode = cycles == 999
+            if infinite_mode:
+                logger.info(f"🔄 Початок БЕЗКІНЕЧНОЇ розсилки в {len(groups)} груп")
+                logger.info("⚠️ Для зупинки натисніть Ctrl+C")
+            else:
+                logger.info(f"🔄 Початок розсилки в {len(groups)} груп, циклів: {cycles}")
             
             total_successful = 0
             total_failed = 0
+            current_cycle = 0
             
-            for cycle in range(1, cycles + 1):
-                logger.info("="*60)
-                logger.info(f"🔄 ЦИКЛ {cycle}/{cycles}")
-                logger.info("="*60)
-                
-                cycle_successful = 0
-                cycle_failed = 0
-                
-                for i, group_link in enumerate(groups, 1):
-                    # Вибір випадкового повідомлення для кожної групи
-                    random_message = random.choice(messages)
+            try:
+                while True:
+                    current_cycle += 1
                     
-                    logger.info(f"[{i}/{len(groups)}] Надсилання в групу: {group_link}")
-                    logger.info(f"Повідомлення: {random_message[:50]}...")
+                    # Перевірка чи не досягнуто ліміт циклів (тільки для скінченного режиму)
+                    if not infinite_mode and current_cycle > cycles:
+                        break
                     
-                    # Надсилання повідомлення
-                    success = await self.send_message_to_group(group_link, random_message)
-                    
-                    if success:
-                        cycle_successful += 1
-                        total_successful += 1
+                    logger.info("="*60)
+                    if infinite_mode:
+                        logger.info(f"🔄 ЦИКЛ {current_cycle} (БЕЗКІНЕЧНИЙ РЕЖИМ)")
                     else:
-                        cycle_failed += 1
-                        total_failed += 1
+                        logger.info(f"🔄 ЦИКЛ {current_cycle}/{cycles}")
+                    logger.info("="*60)
                     
-                    # Невелика затримка між групами в межах одного циклу (щоб не заблокували)
-                    if i < len(groups):
-                        small_delay = random.randint(5, 15)  # 5-15 секунд між групами
-                        logger.info(f"⏳ Мала затримка: {small_delay} секунд...")
-                        await asyncio.sleep(small_delay)
-                
-                # Статистика циклу
-                logger.info("-"*50)
-                logger.info(f"📊 СТАТИСТИКА ЦИКЛУ {cycle}:")
-                logger.info(f"✅ Успішно надіслано: {cycle_successful}")
-                logger.info(f"❌ Помилок: {cycle_failed}")
-                logger.info(f"📝 Всього груп в циклі: {len(groups)}")
-                logger.info("-"*50)
-                
-                # Велика затримка після завершення циклу (окрім останнього)
-                if cycle < cycles:
-                    delay = self.get_random_delay()
-                    logger.info(f"🕐 ЗАТРИМКА МІЖ ЦИКЛАМИ: {delay//60} хвилин ({delay} секунд)")
-                    logger.info(f"⏰ Наступний цикл почнеться о {(datetime.now() + timedelta(seconds=delay)).strftime('%H:%M:%S')}")
-                    await asyncio.sleep(delay)
+                    cycle_successful = 0
+                    cycle_failed = 0
+                    
+                    for i, group_link in enumerate(groups, 1):
+                        # Вибір випадкового повідомлення для кожної групи
+                        random_message = random.choice(messages)
+                        
+                        logger.info(f"[{i}/{len(groups)}] Надсилання в групу: {group_link}")
+                        logger.info(f"Повідомлення: {random_message[:50]}...")
+                        
+                        # Надсилання повідомлення
+                        success = await self.send_message_to_group(group_link, random_message)
+                        
+                        if success:
+                            cycle_successful += 1
+                            total_successful += 1
+                        else:
+                            cycle_failed += 1
+                            total_failed += 1
+                        
+                        # Невелика затримка між групами в межах одного циклу (щоб не заблокували)
+                        if i < len(groups):
+                            small_delay = random.randint(5, 15)  # 5-15 секунд між групами
+                            logger.info(f"⏳ Мала затримка: {small_delay} секунд...")
+                            await asyncio.sleep(small_delay)
+                    
+                    # Статистика циклу
+                    logger.info("-"*50)
+                    if infinite_mode:
+                        logger.info(f"📊 СТАТИСТИКА ЦИКЛУ {current_cycle} (БЕЗКІНЕЧНИЙ):")
+                    else:
+                        logger.info(f"📊 СТАТИСТИКА ЦИКЛУ {current_cycle}/{cycles}:")
+                    logger.info(f"✅ Успішно надіслано: {cycle_successful}")
+                    logger.info(f"❌ Помилок: {cycle_failed}")
+                    logger.info(f"📝 Всього груп в циклі: {len(groups)}")
+                    logger.info(f"📈 Загальна статистика: ✅{total_successful} ❌{total_failed}")
+                    logger.info("-"*50)
+                    
+                    # Велика затримка після завершення циклу
+                    # (для безкінечного режиму завжди, для скінченного - окрім останнього)
+                    if infinite_mode or current_cycle < cycles:
+                        delay = self.get_random_delay()
+                        next_time = (datetime.now() + timedelta(seconds=delay)).strftime('%H:%M:%S %d.%m.%Y')
+                        
+                        if infinite_mode:
+                            logger.info(f"🕐 ЗАТРИМКА МІЖ ЦИКЛАМИ: {delay//60} хвилин ({delay} секунд)")
+                            logger.info(f"⏰ Наступний цикл {current_cycle + 1} почнеться о {next_time}")
+                        else:
+                            logger.info(f"🕐 ЗАТРИМКА МІЖ ЦИКЛАМИ: {delay//60} хвилин ({delay} секунд)")
+                            logger.info(f"⏰ Наступний цикл {current_cycle + 1}/{cycles} почнеться о {next_time}")
+                        
+                        await asyncio.sleep(delay)
+                        
+            except KeyboardInterrupt:
+                logger.info("\n" + "="*60)
+                logger.info("⚠️ ОТРИМАНО СИГНАЛ ЗУПИНКИ (Ctrl+C)")
+                logger.info("🛑 Зупинка розсилки...")
+                logger.info("="*60)
             
             # Підсумкова статистика всіх циклів
             logger.info("="*60)
-            logger.info("🏁 ПІДСУМКОВА СТАТИСТИКА ВСІХ ЦИКЛІВ:")
+            logger.info("🏁 ПІДСУМКОВА СТАТИСТИКА:")
             logger.info(f"✅ Всього успішно надіслано: {total_successful}")
             logger.info(f"❌ Всього помилок: {total_failed}")
-            logger.info(f"🔄 Циклів виконано: {cycles}")
+            logger.info(f"🔄 Циклів виконано: {current_cycle}")
             logger.info(f"📝 Груп в кожному циклі: {len(groups)}")
-            logger.info(f"📊 Всього спроб відправки: {cycles * len(groups)}")
+            logger.info(f"📊 Всього спроб відправки: {current_cycle * len(groups)}")
+            if infinite_mode:
+                logger.info("♾️ Режим: БЕЗКІНЕЧНИЙ (зупинено користувачем)")
+            else:
+                logger.info(f"🎯 Режим: СКІНЧЕННИЙ ({cycles} циклів)")
             logger.info("="*60)
             
         except Exception as e:
@@ -173,23 +213,71 @@ class TelegramSender:
         finally:
             await self.client.disconnect()
 
+def get_cycles_from_user():
+    """Отримання кількості циклів від користувача"""
+    while True:
+        try:
+            print("\n" + "="*50)
+            print("🔄 НАЛАШТУВАННЯ ЦИКЛІВ РОЗСИЛКИ")
+            print("="*50)
+            print("1️⃣  Введіть число від 1 до 998 - кількість циклів")
+            print("♾️  Введіть 999 - для безкінечної розсилки")
+            print("❌ Введіть 0 - для виходу")
+            print("-"*50)
+            
+            user_input = input("Введіть кількість циклів: ").strip()
+            
+            if not user_input:
+                print("❌ Порожній ввід! Спробуйте ще раз.")
+                continue
+            
+            cycles = int(user_input)
+            
+            if cycles == 0:
+                print("👋 Вихід з програми...")
+                return None
+            elif cycles == 999:
+                print("♾️ Обрано БЕЗКІНЕЧНИЙ режим розсилки!")
+                print("⚠️ Для зупинки використовуйте Ctrl+C")
+                confirm = input("Підтвердити? (y/n): ").strip().lower()
+                if confirm in ['y', 'yes', 'так', 'т']:
+                    return 999
+                else:
+                    continue
+            elif 1 <= cycles <= 998:
+                print(f"✅ Обрано {cycles} циклів розсилки")
+                return cycles
+            else:
+                print("❌ Некоректне значення! Введіть число від 1 до 998, або 999 для безкінечної розсилки.")
+                continue
+                
+        except ValueError:
+            print("❌ Некоректний формат! Введіть число.")
+        except KeyboardInterrupt:
+            print("\n👋 Вихід з програми...")
+            return None
+
 async def main():
-    # Налаштування Telegram API
+    # Налаштування Telegram API взято з config.py
     # Отримати ці дані можна на https://my.telegram.org/apps
-    API_ID = '26812497'  # Замініть на ваш API ID
-    API_HASH = '76638ee0a131af4fdf1a388f0b947b78'  # Замініть на ваш API Hash
-    PHONE_NUMBER = '+380631420477'  # Замініть на ваш номер телефону (+380XXXXXXXXX)
-    
-    # Налаштування кількості циклів розсилки
-    CYCLES = 1  # Змініть на потрібну кількість циклів (наприклад, 5 для 5 циклів)
+    # Тепер використовуємо імпортовані змінні
+    print(f"API_ID: {API_ID}")
+    print(f"API_HASH: {API_HASH}")
+    print(f"PHONE_NUMBER: {PHONE_NUMBER}")
     
     if API_ID == 'YOUR_API_ID' or API_HASH == 'YOUR_API_HASH':
         print("❌ Будь ласка, вкажіть ваші дані API в коді!")
         print("Отримати їх можна на https://my.telegram.org/apps")
         return
     
+    # Отримання кількості циклів від користувача
+    cycles = get_cycles_from_user()
+    if cycles is None:
+        return
+    
+    print("\n🚀 Початок роботи Telegram Sender...")
     sender = TelegramSender(API_ID, API_HASH, PHONE_NUMBER)
-    await sender.start_mass_sending(cycles=CYCLES)
+    await sender.start_mass_sending(cycles=cycles)
 
 if __name__ == "__main__":
     asyncio.run(main())
