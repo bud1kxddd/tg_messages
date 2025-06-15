@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from telethon import TelegramClient
 from config import API_ID, API_HASH, PHONE_NUMBER
 import json
+import math
 
 # Налаштування логування
 logging.basicConfig(
@@ -56,8 +57,8 @@ class TelegramSender:
             return []
     
     def get_random_delay(self):
-        """Генерація випадкової затримки від 40 до 90 хвилин"""
-        delay_minutes = random.randint(40, 90)
+        """Генерація випадкової затримки від 5 до 10 хвилин"""
+        delay_minutes = random.randint(5, 10)
         delay_seconds = delay_minutes * 60
         logger.info(f"Наступна затримка: {delay_minutes} хвилин ({delay_seconds} секунд)")
         return delay_seconds
@@ -74,7 +75,7 @@ class TelegramSender:
             # Якщо це просто назва або username без @
             return group_link
     
-    async def send_message_to_group(self, group_link, message):
+    async def send_message_to_group(self, group_link, message, thread_id=1):
         """Надсилання повідомлення в конкретну групу"""
         try:
             # Витягуємо ідентифікатор групи з посилання
@@ -83,14 +84,55 @@ class TelegramSender:
             # Спроба знайти групу
             entity = await self.client.get_entity(group_identifier)
             await self.client.send_message(entity, message)
-            logger.info(f"✅ Повідомлення успішно надіслано в групу: {group_link}")
+            logger.info(f"✅ [Поток {thread_id}] Повідомлення успішно надіслано в групу: {group_link}")
             return True
         except Exception as e:
-            logger.error(f"❌ Помилка при надсиланні в групу {group_link}: {e}")
+            logger.error(f"❌ [Поток {thread_id}] Помилка при надсиланні в групу {group_link}: {e}")
             return False
     
-    async def start_mass_sending(self, cycles=1):
-        """Основна функція для масової розсилки"""
+    async def process_group_batch(self, groups_batch, messages, thread_id, total_groups):
+        """Обробка пакету груп в окремому потоці"""
+        thread_successful = 0
+        thread_failed = 0
+        
+        for i, group_link in enumerate(groups_batch, 1):
+            # Вибір випадкового повідомлення для кожної групи
+            random_message = random.choice(messages)
+            
+            global_index = (thread_id - 1) * len(groups_batch) + i
+            logger.info(f"[Поток {thread_id}] [{global_index}/{total_groups}] Надсилання в групу: {group_link}")
+            logger.info(f"[Поток {thread_id}] Повідомлення: {random_message[:50]}...")
+            
+            # Надсилання повідомлення
+            success = await self.send_message_to_group(group_link, random_message, thread_id)
+            
+            if success:
+                thread_successful += 1
+            else:
+                thread_failed += 1
+            
+            # Затримка між повідомленнями в потоці (максимум 3 секунди)
+            if i < len(groups_batch):
+                delay = random.randint(1, 3)  # 1-3 секунди между сообщениями
+                logger.info(f"⏳ [Поток {thread_id}] Затримка: {delay} секунд...")
+                await asyncio.sleep(delay)
+        
+        logger.info(f"🧵 [Поток {thread_id}] завершено: ✅{thread_successful} ❌{thread_failed}")
+        return thread_successful, thread_failed
+    
+    def split_groups_into_batches(self, groups, num_threads):
+        """Розділення груп на пакети для потоків"""
+        batch_size = math.ceil(len(groups) / num_threads)
+        batches = []
+        
+        for i in range(0, len(groups), batch_size):
+            batch = groups[i:i + batch_size]
+            batches.append(batch)
+        
+        return batches
+    
+    async def start_mass_sending(self, cycles=1, num_threads=1):
+        """Основна функція для масової розсилки з підтримкою потоків"""
         try:
             # Підключення до Telegram
             await self.client.start(phone=self.phone_number)
@@ -108,13 +150,19 @@ class TelegramSender:
                 logger.error("Список повідомлень порожній!")
                 return
             
+            # Розділення груп на пакети для потоків
+            group_batches = self.split_groups_into_batches(groups, num_threads)
+            actual_threads = len(group_batches)
+            
             # Визначення режиму роботи
             infinite_mode = cycles == 999
             if infinite_mode:
                 logger.info(f"🔄 Початок БЕЗКІНЕЧНОЇ розсилки в {len(groups)} груп")
+                logger.info(f"🧵 Кількість потоків: {actual_threads}")
                 logger.info("⚠️ Для зупинки натисніть Ctrl+C")
             else:
                 logger.info(f"🔄 Початок розсилки в {len(groups)} груп, циклів: {cycles}")
+                logger.info(f"🧵 Кількість потоків: {actual_threads}")
             
             total_successful = 0
             total_failed = 0
@@ -133,33 +181,24 @@ class TelegramSender:
                         logger.info(f"🔄 ЦИКЛ {current_cycle} (БЕЗКІНЕЧНИЙ РЕЖИМ)")
                     else:
                         logger.info(f"🔄 ЦИКЛ {current_cycle}/{cycles}")
+                    logger.info(f"🧵 Запуск {actual_threads} потоків...")
                     logger.info("="*60)
                     
-                    cycle_successful = 0
-                    cycle_failed = 0
+                    # Запуск всіх потоків паралельно
+                    tasks = []
+                    for thread_id, batch in enumerate(group_batches, 1):
+                        task = self.process_group_batch(batch, messages, thread_id, len(groups))
+                        tasks.append(task)
                     
-                    for i, group_link in enumerate(groups, 1):
-                        # Вибір випадкового повідомлення для кожної групи
-                        random_message = random.choice(messages)
-                        
-                        logger.info(f"[{i}/{len(groups)}] Надсилання в групу: {group_link}")
-                        logger.info(f"Повідомлення: {random_message[:50]}...")
-                        
-                        # Надсилання повідомлення
-                        success = await self.send_message_to_group(group_link, random_message)
-                        
-                        if success:
-                            cycle_successful += 1
-                            total_successful += 1
-                        else:
-                            cycle_failed += 1
-                            total_failed += 1
-                        
-                        # Невелика затримка між групами в межах одного циклу (щоб не заблокували)
-                        if i < len(groups):
-                            small_delay = random.randint(5, 15)  # 5-15 секунд між групами
-                            logger.info(f"⏳ Мала затримка: {small_delay} секунд...")
-                            await asyncio.sleep(small_delay)
+                    # Очікування завершення всіх потоків
+                    results = await asyncio.gather(*tasks)
+                    
+                    # Підрахунок статистики
+                    cycle_successful = sum(result[0] for result in results)
+                    cycle_failed = sum(result[1] for result in results)
+                    
+                    total_successful += cycle_successful
+                    total_failed += cycle_failed
                     
                     # Статистика циклу
                     logger.info("-"*50)
@@ -170,10 +209,11 @@ class TelegramSender:
                     logger.info(f"✅ Успішно надіслано: {cycle_successful}")
                     logger.info(f"❌ Помилок: {cycle_failed}")
                     logger.info(f"📝 Всього груп в циклі: {len(groups)}")
+                    logger.info(f"🧵 Потоків використано: {actual_threads}")
                     logger.info(f"📈 Загальна статистика: ✅{total_successful} ❌{total_failed}")
                     logger.info("-"*50)
                     
-                    # Велика затримка після завершення циклу
+                    # Велика затримка після завершення циклу (5-10 хвилин)
                     # (для безкінечного режиму завжди, для скінченного - окрім останнього)
                     if infinite_mode or current_cycle < cycles:
                         delay = self.get_random_delay()
@@ -201,6 +241,7 @@ class TelegramSender:
             logger.info(f"❌ Всього помилок: {total_failed}")
             logger.info(f"🔄 Циклів виконано: {current_cycle}")
             logger.info(f"📝 Груп в кожному циклі: {len(groups)}")
+            logger.info(f"🧵 Потоків використано: {actual_threads}")
             logger.info(f"📊 Всього спроб відправки: {current_cycle * len(groups)}")
             if infinite_mode:
                 logger.info("♾️ Режим: БЕЗКІНЕЧНИЙ (зупинено користувачем)")
@@ -257,6 +298,43 @@ def get_cycles_from_user():
             print("\n👋 Вихід з програми...")
             return None
 
+def get_threads_from_user():
+    """Отримання кількості потоків від користувача"""
+    while True:
+        try:
+            print("\n" + "="*50)
+            print("🧵 НАЛАШТУВАННЯ КІЛЬКОСТІ ПОТОКІВ")
+            print("="*50)
+            print("1️⃣  Введіть число від 1 до 10 - кількість потоків")
+            print("⚠️  Рекомендується: 1-3 потоки для уникнення блокування")
+            print("-"*50)
+            
+            user_input = input("Введіть кількість потоків (за замовчуванням 1): ").strip()
+            
+            if not user_input:
+                print("✅ Використовуємо 1 поток за замовчуванням")
+                return 1
+            
+            threads = int(user_input)
+            
+            if 1 <= threads <= 10:
+                if threads > 3:
+                    print("⚠️ УВАГА: Використання більше 3 потоків може призвести до блокування!")
+                    confirm = input("Продовжити? (y/n): ").strip().lower()
+                    if confirm not in ['y', 'yes', 'так', 'т']:
+                        continue
+                print(f"✅ Обрано {threads} потоків")
+                return threads
+            else:
+                print("❌ Некоректне значення! Введіть число від 1 до 10.")
+                continue
+                
+        except ValueError:
+            print("❌ Некоректний формат! Введіть число.")
+        except KeyboardInterrupt:
+            print("\n👋 Вихід з програми...")
+            return None
+
 async def main():
     # Налаштування Telegram API взято з config.py
     # Отримати ці дані можна на https://my.telegram.org/apps
@@ -275,9 +353,14 @@ async def main():
     if cycles is None:
         return
     
+    # Отримання кількості потоків від користувача
+    threads = get_threads_from_user()
+    if threads is None:
+        return
+    
     print("\n🚀 Початок роботи Telegram Sender...")
     sender = TelegramSender(API_ID, API_HASH, PHONE_NUMBER)
-    await sender.start_mass_sending(cycles=cycles)
+    await sender.start_mass_sending(cycles=cycles, num_threads=threads)
 
 if __name__ == "__main__":
     asyncio.run(main())
