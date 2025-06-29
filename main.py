@@ -56,6 +56,13 @@ class TelegramSender:
             logger.error(f"Помилка при завантаженні повідомлень: {e}")
             return []
     
+    def randomize_groups(self, groups):
+        """Рандомізація порядку груп"""
+        randomized_groups = groups.copy()  # Створюємо копію, щоб не змінювати оригінальний список
+        random.shuffle(randomized_groups)
+        logger.info(f"🎲 Порядок груп рандомізовано для поточного циклу")
+        return randomized_groups
+    
     def get_random_delay(self):
         """Генерація випадкової затримки від 5 до 10 хвилин"""
         delay_minutes = random.randint(5, 10)
@@ -139,10 +146,10 @@ class TelegramSender:
             logger.info("✅ Успішно підключено до Telegram")
             
             # Завантаження груп і повідомлень
-            groups = await self.load_groups()
+            original_groups = await self.load_groups()
             messages = self.load_messages()
             
-            if not groups:
+            if not original_groups:
                 logger.error("Список груп порожній!")
                 return
             
@@ -150,19 +157,15 @@ class TelegramSender:
                 logger.error("Список повідомлень порожній!")
                 return
             
-            # Розділення груп на пакети для потоків
-            group_batches = self.split_groups_into_batches(groups, num_threads)
-            actual_threads = len(group_batches)
-            
             # Визначення режиму роботи
             infinite_mode = cycles == 999
             if infinite_mode:
-                logger.info(f"🔄 Початок БЕЗКІНЕЧНОЇ розсилки в {len(groups)} груп")
-                logger.info(f"🧵 Кількість потоків: {actual_threads}")
+                logger.info(f"🔄 Початок БЕЗКІНЕЧНОЇ розсилки в {len(original_groups)} груп")
+                logger.info(f"🧵 Кількість потоків: {num_threads}")
                 logger.info("⚠️ Для зупинки натисніть Ctrl+C")
             else:
-                logger.info(f"🔄 Початок розсилки в {len(groups)} груп, циклів: {cycles}")
-                logger.info(f"🧵 Кількість потоків: {actual_threads}")
+                logger.info(f"🔄 Початок розсилки в {len(original_groups)} груп, циклів: {cycles}")
+                logger.info(f"🧵 Кількість потоків: {num_threads}")
             
             total_successful = 0
             total_failed = 0
@@ -176,18 +179,26 @@ class TelegramSender:
                     if not infinite_mode and current_cycle > cycles:
                         break
                     
+                    # Рандомізація груп для поточного циклу
+                    randomized_groups = self.randomize_groups(original_groups)
+                    
+                    # Розділення рандомізованих груп на пакети для потоків
+                    group_batches = self.split_groups_into_batches(randomized_groups, num_threads)
+                    actual_threads = len(group_batches)
+                    
                     logger.info("="*60)
                     if infinite_mode:
                         logger.info(f"🔄 ЦИКЛ {current_cycle} (БЕЗКІНЕЧНИЙ РЕЖИМ)")
                     else:
                         logger.info(f"🔄 ЦИКЛ {current_cycle}/{cycles}")
                     logger.info(f"🧵 Запуск {actual_threads} потоків...")
+                    logger.info(f"🎲 Груби рандомізовано для цього циклу")
                     logger.info("="*60)
                     
                     # Запуск всіх потоків паралельно
                     tasks = []
                     for thread_id, batch in enumerate(group_batches, 1):
-                        task = self.process_group_batch(batch, messages, thread_id, len(groups))
+                        task = self.process_group_batch(batch, messages, thread_id, len(randomized_groups))
                         tasks.append(task)
                     
                     # Очікування завершення всіх потоків
@@ -208,8 +219,9 @@ class TelegramSender:
                         logger.info(f"📊 СТАТИСТИКА ЦИКЛУ {current_cycle}/{cycles}:")
                     logger.info(f"✅ Успішно надіслано: {cycle_successful}")
                     logger.info(f"❌ Помилок: {cycle_failed}")
-                    logger.info(f"📝 Всього груп в циклі: {len(groups)}")
+                    logger.info(f"📝 Всього груп в циклі: {len(randomized_groups)}")
                     logger.info(f"🧵 Потоків використано: {actual_threads}")
+                    logger.info(f"🎲 Групи рандомізовано: ТАК")
                     logger.info(f"📈 Загальна статистика: ✅{total_successful} ❌{total_failed}")
                     logger.info("-"*50)
                     
@@ -240,9 +252,10 @@ class TelegramSender:
             logger.info(f"✅ Всього успішно надіслано: {total_successful}")
             logger.info(f"❌ Всього помилок: {total_failed}")
             logger.info(f"🔄 Циклів виконано: {current_cycle}")
-            logger.info(f"📝 Груп в кожному циклі: {len(groups)}")
-            logger.info(f"🧵 Потоків використано: {actual_threads}")
-            logger.info(f"📊 Всього спроб відправки: {current_cycle * len(groups)}")
+            logger.info(f"📝 Груп в кожному циклі: {len(original_groups)}")
+            logger.info(f"🧵 Потоків використано: {num_threads}")
+            logger.info(f"🎲 Рандомізація груп: УВІМКНЕНА")
+            logger.info(f"📊 Всього спроб відправки: {current_cycle * len(original_groups)}")
             if infinite_mode:
                 logger.info("♾️ Режим: БЕЗКІНЕЧНИЙ (зупинено користувачем)")
             else:
@@ -359,6 +372,7 @@ async def main():
         return
     
     print("\n🚀 Початок роботи Telegram Sender...")
+    print("🎲 Рандомізація груп УВІМКНЕНА - кожен цикл почнеться з різних груп!")
     sender = TelegramSender(API_ID, API_HASH, PHONE_NUMBER)
     await sender.start_mass_sending(cycles=cycles, num_threads=threads)
 
