@@ -64,8 +64,8 @@ class TelegramSender:
         return randomized_groups
     
     def get_random_delay(self):
-        """Генерація випадкової затримки від 5 до 10 хвилин"""
-        delay_minutes = random.randint(5, 10)
+        """Генерація випадкової затримки від 70 до 120 хвилин"""
+        delay_minutes = random.randint(70, 120)
         delay_seconds = delay_minutes * 60
         logger.info(f"Наступна затримка: {delay_minutes} хвилин ({delay_seconds} секунд)")
         return delay_seconds
