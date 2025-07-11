@@ -24,7 +24,12 @@ class TelegramSender:
         self.api_id = api_id
         self.api_hash = api_hash
         self.phone_number = phone_number
-        self.client = TelegramClient('session', api_id, api_hash)
+        
+        # Создаем уникальное имя сессии на основе номера телефона
+        session_name = f"session_{phone_number.replace('+', '').replace(' ', '').replace('-', '')}"
+        self.client = TelegramClient(session_name, api_id, api_hash)
+        logger.info(f"📱 Создана сессия для номера: {phone_number}")
+        logger.info(f"💾 Файл сессии: {session_name}.session")
     
     async def load_groups(self, filename='groups.txt'):
         """Завантаження списку груп з файлу"""
@@ -81,6 +86,49 @@ class TelegramSender:
         else:
             # Якщо це просто назва або username без @
             return group_link
+    
+    async def verify_account(self):
+        """Проверка подключенного аккаунта"""
+        try:
+            me = await self.client.get_me()
+            logger.info("="*60)
+            logger.info("👤 ИНФОРМАЦИЯ О ПОДКЛЮЧЕННОМ АККАУНТЕ:")
+            logger.info(f"📞 Номер телефона: +{me.phone}")
+            logger.info(f"👤 Имя: {me.first_name} {me.last_name or ''}".strip())
+            logger.info(f"🆔 ID: {me.id}")
+            logger.info(f"📧 Username: @{me.username}" if me.username else "📧 Username: не указан")
+            logger.info("="*60)
+            
+            # Проверка соответствия номера
+            expected_phone = self.phone_number.replace('+', '')
+            if me.phone != expected_phone:
+                logger.warning("⚠️ ВНИМАНИЕ: НЕСООТВЕТСТВИЕ НОМЕРОВ ТЕЛЕФОНОВ!")
+                logger.warning(f"🔴 Ожидаемый номер: {self.phone_number}")
+                logger.warning(f"🔴 Подключенный номер: +{me.phone}")
+                logger.warning("🔴 Возможно используется неправильная сессия!")
+                logger.warning("🔴 Рекомендуется удалить файл сессии и переподключиться")
+                
+                # Предложение продолжить или остановиться
+                print("\n" + "="*60)
+                print("⚠️ ОБНАРУЖЕНО НЕСООТВЕТСТВИЕ АККАУНТОВ!")
+                print(f"Ожидаемый: {self.phone_number}")
+                print(f"Подключен: +{me.phone}")
+                print("="*60)
+                
+                choice = input("Продолжить работу с этим аккаунтом? (y/n): ").strip().lower()
+                if choice not in ['y', 'yes', 'так', 'т']:
+                    logger.info("🛑 Остановка по запросу пользователя")
+                    return False
+                else:
+                    logger.info("✅ Продолжение работы с текущим аккаунтом")
+            else:
+                logger.info("✅ Номер телефона совпадает - все в порядке!")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке аккаунта: {e}")
+            return False
     
     async def send_message_to_group(self, group_link, message, thread_id=1):
         """Надсилання повідомлення в конкретну групу"""
@@ -144,6 +192,11 @@ class TelegramSender:
             # Підключення до Telegram
             await self.client.start(phone=self.phone_number)
             logger.info("✅ Успішно підключено до Telegram")
+            
+            # Проверка подключенного аккаунта
+            if not await self.verify_account():
+                logger.error("🛑 Проверка аккаунта не пройдена, остановка работы")
+                return
             
             # Завантаження груп і повідомлень
             original_groups = await self.load_groups()
@@ -351,13 +404,15 @@ def get_threads_from_user():
 async def main():
     # Налаштування Telegram API взято з config.py
     # Отримати ці дані можна на https://my.telegram.org/apps
-    # Тепер використовуємо імпортовані змінні
-    print(f"API_ID: {API_ID}")
-    print(f"API_HASH: {API_HASH}")
-    print(f"PHONE_NUMBER: {PHONE_NUMBER}")
+    print("="*60)
+    print("📋 КОНФІГУРАЦІЯ TELEGRAM API:")
+    print(f"🆔 API_ID: {API_ID}")
+    print(f"🔑 API_HASH: {API_HASH}")
+    print(f"📞 PHONE_NUMBER: {PHONE_NUMBER}")
+    print("="*60)
     
     if API_ID == 'YOUR_API_ID' or API_HASH == 'YOUR_API_HASH':
-        print("❌ Будь ласка, вкажіть ваші дані API в коді!")
+        print("❌ Будь ласка, вкажіть ваші дані API в config.py!")
         print("Отримати їх можна на https://my.telegram.org/apps")
         return
     
@@ -373,6 +428,8 @@ async def main():
     
     print("\n🚀 Початок роботи Telegram Sender...")
     print("🎲 Рандомізація груп УВІМКНЕНА - кожен цикл почнеться з різних груп!")
+    print("🔍 Буде виконана перевірка підключеного аккаунта...")
+    
     sender = TelegramSender(API_ID, API_HASH, PHONE_NUMBER)
     await sender.start_mass_sending(cycles=cycles, num_threads=threads)
 
